@@ -153,6 +153,21 @@ func (framer *Framer) WriteSupportedFrame(stream int, w io.Writer) error {
 	return framer.getFramer(w).writeSupportedFrame(stream)
 }
 
+// WriteAuthenticateFrame writes the AUTHENTICATE frame with steam ID with the provided io.Writer.
+func (framer *Framer) WriteAuthenticateFrame(stream int, class string, w io.Writer) error {
+	return framer.getFramer(w).writeAuthenticateFrame(stream, class)
+}
+
+// WriteAuthChallengeFrame writes the AUTH_CHALLENGE frame with steam ID with the provided io.Writer.
+func (framer *Framer) WriteAuthChallengeFrame(stream int, challenge []byte, w io.Writer) error {
+	return framer.getFramer(w).writeAuthChallengeFrame(stream, challenge)
+}
+
+// WriteAuthSuccessFrame writes the AUTH_SUCCESS frame with steam ID with the provided io.Writer.
+func (framer *Framer) WriteAuthSuccessFrame(stream int, response []byte, w io.Writer) error {
+	return framer.getFramer(w).writeAuthSuccessFrame(stream, response)
+}
+
 // WriteErrorFrame writes the ERROR frame with steam ID, error code, and message
 // with the provided io.Writer.
 func (framer *Framer) WriteErrorFrame(stream int, code int32, message string, w io.Writer) error {
@@ -254,6 +269,15 @@ func (framer *Framer) ReadFrameBytes(head *FrameHeader) ([]byte, error) {
 		return nil, fmt.Errorf("unable to read frame body: read %d/%d bytes: %v", n, hdr.length, err)
 	}
 	return fullFrameBytes, nil
+}
+
+// PullAuthResponse the data provided in the AUTH_RESPONSE frame.
+func (framer *Framer) PullAuthResponse(f Frame) []byte {
+	var frame = frame(f)
+	if f, ok := frame.(*authResponseFrame); ok {
+		return f.data
+	}
+	return nil
 }
 
 // PullStatementFromFrame parses a frame containing CQL query statement(s) and
@@ -403,6 +427,8 @@ func (f *framer) parseClientFrame() (frame frame, err error) {
 		frame = f.parseOptionsFrame()
 	case opRegister:
 		frame = f.parseRegisterFrame()
+	case opAuthResponse:
+		frame = f.parseAuthResponseFrame()
 	case opQuery:
 		frame = f.parseQueryFrame()
 	case opPrepare:
@@ -427,6 +453,23 @@ func (f *framer) parseStartupFrame() frame {
 	return &startupFrame{
 		frameHeader: *f.header,
 		startup:     f.readStringMap(),
+	}
+}
+
+type authResponseFrame struct {
+	frameHeader
+
+	data []byte
+}
+
+func (a *authResponseFrame) String() string {
+	return fmt.Sprintf("[auth_response data=%q]", a.data)
+}
+
+func (f *framer) parseAuthResponseFrame() frame {
+	return &authResponseFrame{
+		frameHeader: *f.header,
+		data:        f.readBytes(),
 	}
 }
 
@@ -648,6 +691,33 @@ func (f *framer) writeSupportedFrame(streamID int) error {
 	f.writeHeader(f.flags, opSupported, streamID)
 	// explicitly set the response direction/flag
 	f.wbuf[0] |= protoDirectionMask
+	return f.finishWrite()
+}
+
+func (f *framer) writeAuthenticateFrame(streamID int, class string) error {
+	f.writeHeader(f.flags, opAuthenticate, streamID)
+	// explicitly set the response direction/flag
+	f.wbuf[0] |= protoDirectionMask
+
+	f.writeString(class)
+	return f.finishWrite()
+}
+
+func (f *framer) writeAuthChallengeFrame(streamID int, challenge []byte) error {
+	f.writeHeader(f.flags, opAuthChallenge, streamID)
+	// explicitly set the response direction/flag
+	f.wbuf[0] |= protoDirectionMask
+
+	f.writeBytes(challenge)
+	return f.finishWrite()
+}
+
+func (f *framer) writeAuthSuccessFrame(streamID int, bytes []byte) error {
+	f.writeHeader(f.flags, opAuthSuccess, streamID)
+	// explicitly set the response direction/flag
+	f.wbuf[0] |= protoDirectionMask
+
+	f.writeBytes(bytes)
 	return f.finishWrite()
 }
 
