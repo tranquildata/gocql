@@ -119,7 +119,8 @@ func (framer *Framer) ReadHeader() (head FrameHeader, err error) {
 // and the full frame, which includes the header, as a byte array.
 func (framer *Framer) ReadFrame(head *FrameHeader) (Frame, []byte, error) {
 	if framer.framer == nil {
-		return nil, nil, fmt.Errorf("Framer is not setup")
+		framer.protoVersion = byte(head.hdr.version)
+		framer.framer = newFramer(framer.input, framer.output, framer.compressor, framer.protoVersion)
 	}
 	var f = framer.framer
 	err := f.readFrame(&head.hdr)
@@ -128,7 +129,11 @@ func (framer *Framer) ReadFrame(head *FrameHeader) (Frame, []byte, error) {
 	}
 	frame, err := f.parseClientFrame()
 	if err != nil {
-		return nil, nil, err
+		// Try reading it as a server response frame before giving up
+		frame, err = f.parseFrame()
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 
 	frameBytes := framer.fullFrameBytes(head)
@@ -151,6 +156,11 @@ func (framer *Framer) WriteReadyFrame(stream int, w io.Writer) error {
 // WriteSupportedFrame writes the SUPPORTED frame with steam ID with the provided io.Writer.
 func (framer *Framer) WriteSupportedFrame(stream int, w io.Writer) error {
 	return framer.getFramer(w).writeSupportedFrame(stream)
+}
+
+// WriteAuthResponseFrame writes the AUTH_RESPONSE frame with steam ID with the provided io.Writer.
+func (framer *Framer) WriteAuthResponseFrame(stream int, data []byte, w io.Writer) error {
+	return framer.getFramer(w).writeAuthResponseFrame(stream, data)
 }
 
 // WriteAuthenticateFrame writes the AUTHENTICATE frame with steam ID with the provided io.Writer.
@@ -271,13 +281,31 @@ func (framer *Framer) ReadFrameBytes(head *FrameHeader) ([]byte, error) {
 	return fullFrameBytes, nil
 }
 
-// PullAuthResponse the data provided in the AUTH_RESPONSE frame.
+// PullAuthResponse returns the data provided in the AUTH_RESPONSE frame.
 func (framer *Framer) PullAuthResponse(f Frame) []byte {
 	var frame = frame(f)
 	if f, ok := frame.(*authResponseFrame); ok {
 		return f.data
 	}
 	return nil
+}
+
+// PullAuthChallenge returns the data provided in the AUTH_CHALLENGE frame.
+func (framer *Framer) PullAuthChallenge(f Frame) []byte {
+	var frame = frame(f)
+	if f, ok := frame.(*authChallengeFrame); ok {
+		return f.data
+	}
+	return nil
+}
+
+// PullAuthenticate returns the data provided in the AUTHENTICATE frame.
+func (framer *Framer) PullAuthenticate(f Frame) string {
+	var frame = frame(f)
+	if af, ok := frame.(*authenticateFrame); ok {
+		return af.class
+	}
+	return ""
 }
 
 // PullStatementFromFrame parses a frame containing CQL query statement(s) and
